@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 只有名單內的使用者（用 UID 辨識）可以讀寫證照資料，其他一律拒絕
+    function allowed() {
+      return request.auth != null
+        && request.auth.uid in [
+          '把第一位使用者的UID貼在這裡',
+          '要多人使用就再加一位的UID'
+        ];
+    }
+    match /certapp/{doc} {
+      allow read, write: if allowed();
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

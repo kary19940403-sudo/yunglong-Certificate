@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>證照整理</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 :root{--bg:#f7f6f2;--card:#fff;--tx:#1f2328;--mut:#6b7280;--bd:#e3e1d9;--ac:#1d6b5a;--acbg:#e3f1ed;--warn:#8a5a00;--warnbg:#fff1cc;--bad:#a32020;--badbg:#fde4e4;--ok:#1d6b5a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17191a;--card:#212425;--tx:#ececea;--mut:#9aa0a6;--bd:#34383a;--ac:#5cc4ab;--acbg:#1f3a33;--warn:#f0c15a;--warnbg:#3b3017;--bad:#ff8a8a;--badbg:#401f1f;color-scheme:dark}}
@@ -30,18 +33,21 @@ th{color:var(--mut);font-weight:500}
 .hide{display:none}
 .stat{display:flex;gap:10px;flex-wrap:wrap}.stat div{flex:1;min-width:110px;text-align:center;padding:10px;border-radius:10px}
 .stat b{display:block;font-size:24px}
+.login{max-width:400px;margin:40px auto}
 </style>
 </head>
 <body>
 <main>
-<h1>證照整理</h1>
+<div class="row" style="justify-content:space-between"><h1>證照整理</h1><div id="acct" class="mut"></div></div>
+<div id="login"></div>
+<div id="sync"></div>
 <nav id="nav"></nav>
 <div id="v"></div>
 </main>
 <script>
 var KEY='certdata_v1',D={rows:[],alias:{},days:30},tab='search',q='',sel=null,pend=null;
 function load(){try{var s=localStorage.getItem(KEY);if(s)D=JSON.parse(s)}catch(e){}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}if(cloud&&cloud.ready&&user)cloudSave()}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
 function iso(y,m,d){return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
 function pd(v){
@@ -252,7 +258,58 @@ function rs(){document.getElementById('bkbox').innerHTML='<p class="mut">選備�
 function rsf(f){if(!f)return;var r=new FileReader();r.onload=function(e){document.getElementById('bkt').value=e.target.result};r.readAsText(f)}
 function rs2(){try{var o=JSON.parse(document.getElementById('bkt').value);if(!Array.isArray(o.rows))throw 0;D=o;D.alias=D.alias||{};D.train=D.train||[];D.rules=D.rules||{};D.left=D.left||{};D.days=D.days||30;save();render()}catch(e){alert('備份內容無法讀取')}}
 function clr(){if(confirm('確定清除所有資料與名稱歸併設定？')){D={rows:[],alias:{},days:30,train:[],rules:{},left:{}};save();render()}}
-load();D.train=D.train||[];D.rules=D.rules||{};D.left=D.left||{};render();
+
+/* ===== Firebase 設定：請把 Firebase 控制台給你的網頁應用程式設定貼在這裡 =====
+   留空＝單機模式（不用登入，資料只存在這台電腦的瀏覽器）。 */
+var FB={apiKey:'',authDomain:'',projectId:'',appId:''};
+var user=null,db=null,auth=null,DEV=Math.random().toString(36).slice(2),cloud={on:false,ready:false,ver:0,timer:null};
+function fixD(){D.rows=D.rows||[];D.alias=D.alias||{};D.train=D.train||[];D.rules=D.rules||{};D.left=D.left||{};D.days=D.days||30}
+function setSync(t){var e=document.getElementById('sy');if(e)e.textContent=t}
+function acct(){document.getElementById('acct').innerHTML=user?'<span id="sy"></span> '+esc(user.email||'')+' <button class="btn" onclick="logout()">登出</button>':''}
+function syncBar(t){document.getElementById('sync').innerHTML=t?'<div class="card" style="background:var(--warnbg);color:var(--warn)">'+t+' <button class="btn" onclick="reloadLatest()">載入最新版</button></div>':''}
+function loginUI(msg){
+  document.getElementById('nav').innerHTML='';document.getElementById('v').innerHTML='';
+  document.getElementById('login').innerHTML='<div class="card login"><b>請登入</b><p class="mut">此系統含人員資料，僅限授權人員使用。</p><button class="btn p" onclick="gLogin()">使用 Google 登入</button><div class="mut" style="margin:12px 0">或使用帳號密碼</div><div class="row"><input id="le" type="email" placeholder="Email"><input id="lp" type="password" placeholder="密碼"><button class="btn" onclick="eLogin()">登入</button></div><div style="color:var(--bad);margin-top:8px">'+esc(msg||'')+'</div></div>'}
+function gLogin(){auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(function(e){loginUI('登入失敗：'+e.message)})}
+function eLogin(){auth.signInWithEmailAndPassword(document.getElementById('le').value.trim(),document.getElementById('lp').value).catch(function(){loginUI('登入失敗，請確認帳號與密碼')})}
+function logout(){auth.signOut().then(function(){try{localStorage.removeItem(KEY);localStorage.removeItem(KEY+'_bak')}catch(e){}location.reload()})}
+function cloudSave(){clearTimeout(cloud.timer);setSync('同步中…');cloud.timer=setTimeout(pushCloud,800)}
+function pushCloud(){
+  var ref=db.doc('certapp/data');
+  return db.runTransaction(function(tx){return tx.get(ref).then(function(sn){
+    var v=sn.exists?(sn.data().ver||0):0;if(v!==cloud.ver)throw new Error('conflict');
+    tx.set(ref,{json:JSON.stringify(D),ver:v+1,dev:DEV,by:user.email||user.uid,at:firebase.firestore.FieldValue.serverTimestamp()});return v+1})
+  }).then(function(v){cloud.ver=v;setSync('已同步')}).catch(function(e){
+    if(e.message==='conflict'){setSync('未同步');syncBar('別人剛更新了資料，你剛剛的修改還沒存到雲端。請先載入最新版，再重做一次修改。')}
+    else setSync('同步失敗：'+e.message)})}
+function reloadLatest(){db.doc('certapp/data').get().then(function(sn){
+  D=JSON.parse(sn.data().json);cloud.ver=sn.data().ver||0;fixD();
+  try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}syncBar('');setSync('已同步');render()})}
+function loadCloud(){
+  var ref=db.doc('certapp/data');
+  return ref.get().then(function(sn){
+    if(sn.exists){
+      var loc=null;try{loc=localStorage.getItem(KEY)}catch(e){}
+      if(loc&&D.rows&&D.rows.length&&loc!==sn.data().json){try{localStorage.setItem(KEY+'_bak',loc)}catch(e){}}
+      D=JSON.parse(sn.data().json);cloud.ver=sn.data().ver||0;fixD();
+      try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}
+    }else{cloud.ver=0;fixD();if(D.rows.length)pushCloud()}
+    cloud.ready=true;
+    ref.onSnapshot(function(x){if(!x.exists||x.metadata.hasPendingWrites)return;var d=x.data();
+      if(d.dev!==DEV&&d.ver>cloud.ver)syncBar('有人更新了資料（'+esc(d.by||'')+'）。')});
+  })}
+load();fixD();
+if(!(FB.apiKey&&FB.projectId&&typeof firebase!=='undefined')){render()}
+else{
+  firebase.initializeApp(FB);auth=firebase.auth();db=firebase.firestore();cloud.on=true;
+  auth.onAuthStateChanged(function(u){
+    if(u){user=u;document.getElementById('login').innerHTML='';acct();setSync('載入中…');
+      loadCloud().then(function(){setSync('已同步');render()}).catch(function(e){
+        document.getElementById('v').innerHTML='<div class="card">無法讀取雲端資料：'+esc(e.message)+'<p class="mut">若顯示權限不足，代表這個帳號不在允許名單內，請聯絡管理者。</p></div>'})
+    }else{user=null;acct();loginUI('')}
+  })
+}
+
 </script>
 </body>
 </html>
