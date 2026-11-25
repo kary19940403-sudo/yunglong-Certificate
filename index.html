@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>證照整理</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f7f6f2;--card:#fff;--tx:#1f2328;--mut:#6b7280;--bd:#e3e1d9;--ac:#1d6b5a;--acbg:#e3f1ed;--warn:#8a5a00;--warnbg:#fff1cc;--bad:#a32020;--badbg:#fde4e4;--ok:#1d6b5a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17191a;--card:#212425;--tx:#ececea;--mut:#9aa0a6;--bd:#34383a;--ac:#5cc4ab;--acbg:#1f3a33;--warn:#f0c15a;--warnbg:#3b3017;--bad:#ff8a8a;--badbg:#401f1f;color-scheme:dark}}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.55 -apple-system,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+nav button,.btn{border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:8px 14px;border-radius:8px;font:inherit;cursor:pointer}
+nav button.on,.btn.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+input,select{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;max-width:100%}
+input.big{width:100%;box-sizing:border-box;font-size:17px;padding:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;margin:10px 0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip{display:inline-block;padding:3px 10px;border-radius:99px;background:var(--acbg);color:var(--ac);font-size:13px;margin:2px 4px 2px 0;cursor:pointer;border:0}
+.tag{display:inline-block;padding:1px 8px;border-radius:6px;font-size:12px}
+.t-ok{background:var(--acbg);color:var(--ok)}.t-warn{background:var(--warnbg);color:var(--warn)}.t-bad{background:var(--badbg);color:var(--bad)}
+.mut{color:var(--mut);font-size:13px}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--bd);font-size:14px;white-space:nowrap}
+th{color:var(--mut);font-weight:500}
+.hide{display:none}
+.stat{display:flex;gap:10px;flex-wrap:wrap}.stat div{flex:1;min-width:110px;text-align:center;padding:10px;border-radius:10px}
+.stat b{display:block;font-size:24px}
+</style>
+</head>
+<body>
+<main>
+<h1>證照整理</h1>
+<nav id="nav"></nav>
+<div id="v"></div>
+</main>
+<script>
+var KEY='certdata_v1',D={rows:[],alias:{},days:30},tab='search',q='',sel=null,pend=null;
+function load(){try{var s=localStorage.getItem(KEY);if(s)D=JSON.parse(s)}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function iso(y,m,d){return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+function pd(v){
+  if(v==null||v==='')return '';
+  if(typeof v==='number'){var t=new Date(Date.UTC(1899,11,30)+v*864e5);return iso(t.getUTCFullYear(),t.getUTCMonth()+1,t.getUTCDate())}
+  var s=String(v).trim(),m=s.match(/(\d{2,4})\D+(\d{1,2})\D+(\d{1,2})/)||s.match(/^(\d{3})(\d{2})(\d{2})$/)||s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if(!m)return '';var y=+m[1];if(y<1911)y+=1911;return iso(y,+m[2],+m[3]);
+}
+function std(r){return D.alias[r.cert]||r.cert}
+function due(r){var e=r.exp||'',ru=D.rules[std(r)];if(isOn(ru)&&ru.years){var l='';D.train.forEach(function(t){if(t.name===r.name&&t.cert===std(r)&&t.date>l)l=t.date});if(l){var x=new Date(l+'T00:00:00');x.setFullYear(x.getFullYear()+ru.years);var s=iso(x.getFullYear(),x.getMonth()+1,x.getDate());if(s>e)e=s}}return e}
+function days(r){var e=due(r);if(!e||r.cx||isLeft(r))return null;var a=new Date(e+'T00:00:00'),n=new Date();n.setHours(0,0,0,0);return Math.round((a-n)/864e5)}
+var pdp='',pshow=false,popen={},pq2='',plist=[];
+function pkey(r){return r.emp||r.name}
+function isLeft(r){return !!D.left[pkey(r)]}
+function tg(i){var k=plist[i].k;popen[k]=!popen[k];render()}
+function lv(i,c){var k=plist[i].k;if(c)D.left[k]=1;else delete D.left[k];save();render()}
+function pqin(el){pq2=el.value;var p=el.selectionStart;render();var e=document.getElementById('pq');e.focus();e.setSelectionRange(p,p)}
+function vPeople(){
+  if(!D.rows.length)return '<div class="card">還沒有資料。</div>';
+  var m={};D.rows.forEach(function(r){var k=pkey(r),p=m[k]||(m[k]={k:k,name:r.name,emp:r.emp||'',dept:r.dept||'未分部門',rows:[]});p.rows.push(r)});
+  var all=Object.keys(m).map(function(k){return m[k]}),depts=Array.from(new Set(all.map(function(p){return p.dept}))).sort(),kw=pq2.trim().toLowerCase(),nl=all.filter(function(p){return D.left[p.k]}).length;
+  plist=all.filter(function(p){return (pshow||!D.left[p.k])&&(!pdp||p.dept===pdp)&&(!kw||(p.name+p.emp).toLowerCase().indexOf(kw)>=0)}).sort(function(a,b){return a.dept.localeCompare(b.dept)||a.name.localeCompare(b.name)});
+  var h='<div class="row"><select onchange="pdp=this.value;render()"><option value="">全部部門</option>'+depts.map(function(d){return '<option '+(d===pdp?'selected':'')+'>'+esc(d)+'</option>'}).join('')+'</select><input id="pq" placeholder="姓名或員編" value="'+esc(pq2)+'" oninput="pqin(this)"><label class="mut"><input type="checkbox" '+(pshow?'checked':'')+' onchange="pshow=this.checked;render()"> 顯示離職（'+nl+'）</label></div><div class="mut" style="margin-top:8px">在職 '+(all.length-nl)+' 人，點姓名展開證照。勾「離職」後不再提醒，也不會出現在查詢結果。</div>';
+  var last='';
+  plist.forEach(function(p,i){
+    if(p.dept!==last){last=p.dept;h+='<div style="margin:14px 0 2px"><b>'+esc(p.dept)+'</b></div>'}
+    var e=0,s=0,ms=0;p.rows.forEach(function(r){var d=days(r);if(d!==null&&d<0)e++;else if(d!==null&&d<=D.days)s++;if(missing(r).length)ms++});
+    var st=D.left[p.k]?'<span class="tag">離職</span>':(e||s||ms)?(e?'<span class="tag t-bad">過期 '+e+'</span> ':'')+(s?'<span class="tag t-warn">快到期 '+s+'</span> ':'')+(ms?'<span class="tag t-warn">資料不齊 '+ms+'</span>':''):'<span class="tag t-ok">正常</span>';
+    h+='<div class="card" style="margin:6px 0"><div class="row" style="justify-content:space-between"><div style="cursor:pointer" onclick="tg('+i+')">'+(popen[p.k]?'▾ ':'▸ ')+'<b>'+esc(p.name)+'</b> <span class="mut">'+esc(p.emp)+'・'+p.rows.length+' 張</span> '+st+'</div><label class="mut"><input type="checkbox" '+(D.left[p.k]?'checked':'')+' onchange="lv('+i+',this.checked)"> 離職</label></div>';
+    if(popen[p.k])h+='<div class="scroll"><table><tr><th>證照</th><th>到期日</th><th>狀態</th><th>紙本位置</th><th></th></tr>'+p.rows.map(function(r){return '<tr><td>'+esc(std(r))+'</td><td>'+esc(due(r)||'-')+'</td><td>'+badge(r)+'</td><td>'+esc(r.loc||'-')+'</td><td><button class="btn" onclick="editRow('+D.rows.indexOf(r)+')">編輯</button></td></tr>'}).join('')+'</table></div>';
+    h+='</div>'});
+  return h}
+var xsel={},xq='',xleft=false,lastHit=[];
+function xcerts(){return certList().filter(function(c){return !xq||c.toLowerCase().indexOf(xq.toLowerCase())>=0})}
+function xrows(){return D.rows.filter(function(r){return xsel[std(r)]&&(xleft||!isLeft(r))})}
+function xcount(){var b=document.getElementById('xbtn');if(b)b.textContent='匯出選取的證照（'+xrows().length+' 筆）'}
+function xtog(i,c){var n=xcerts()[i];if(c)xsel[n]=1;else delete xsel[n];xcount()}
+function xall(v){xcerts().forEach(function(c){if(v)xsel[c]=1;else delete xsel[c]});render()}
+function xqin(el){xq=el.value;var p=el.selectionStart;render();var e=document.getElementById('xqin');e.focus();e.setSelectionRange(p,p)}
+function vExport(){var cs=xcerts();
+  return '<div class="card"><b>選擇證照匯出</b><div class="row" style="margin:8px 0"><input id="xqin" placeholder="搜尋證照名稱" value="'+esc(xq)+'" oninput="xqin(this)"><button class="btn" onclick="xall(true)">全選目前列出的</button><button class="btn" onclick="xall(false)">取消全選</button></div><div style="max-height:220px;overflow:auto;border:1px solid var(--bd);border-radius:8px;padding:6px 10px">'+cs.map(function(c,i){return '<label style="display:block"><input type="checkbox" '+(xsel[c]?'checked':'')+' onchange="xtog('+i+',this.checked)"> '+esc(c)+'</label>'}).join('')+'</div><div class="row" style="margin-top:8px"><label class="mut"><input type="checkbox" '+(xleft?'checked':'')+' onchange="xleft=this.checked;xcount()"> 包含離職人員</label><button id="xbtn" class="btn p" onclick="exp(xrows(),\'證照名單.xlsx\')">匯出選取的證照（'+xrows().length+' 筆）</button></div></div>'}
+var rfilt=false,rq='';
+function isOn(u){return !!(u&&(u.on===undefined?(u.years||u.hours):u.on))}
+function setOn(el){var c=certList()[+el.dataset.c],u=D.rules[c]||{};u.on=el.checked;D.rules[c]=u;save();render()}
+function rqin(el){rq=el.value;var p=el.selectionStart;render();var e=document.getElementById('rqin');e.focus();e.setSelectionRange(p,p)}
+var pre={},ei=-1;
+function toTrain(i){var r=D.rows[i];pre={name:r.name,cert:std(r)};tab='train';render()}
+function editRow(i){ei=i;tab='edit';render()}
+function saveE(){var g=function(k){return document.getElementById('e_'+k).value.trim()},o={emp:g('emp'),name:g('name'),dept:g('dept'),cert:g('cert'),iss:g('iss'),exp:g('exp'),no:g('no'),form:g('form'),loc:g('loc'),cx:g('cx')};
+  if(!o.name||!o.cert){alert('姓名與證照名稱必填');return}
+  if(ei<0)D.rows.push(o);else{var r=D.rows[ei];for(var k in o)r[k]=o[k]}
+  save();tab='search';q=o.name;sel=null;render()}
+function delE(){if(confirm('確定刪除這筆證照？')){D.rows.splice(ei,1);save();tab='search';render()}}
+function vEdit(){
+  var r=ei>=0?D.rows[ei]:{},n=ei<0,
+  f=function(id,lb,v,t,ex){return '<div class="row" style="margin:6px 0"><span style="width:110px">'+lb+'</span><input id="e_'+id+'" type="'+(t||'text')+'" value="'+esc(v||'')+'" '+(ex||'')+'></div>'},
+  nm=Array.from(new Set(D.rows.map(function(x){return x.name}))).sort(),
+  cs=Array.from(new Set(D.rows.map(function(x){return x.cert}))).sort(),
+  fo=['','紙本','電子檔','紙本＋電子檔','皆無'];
+  if(r.form&&fo.indexOf(r.form)<0)fo.push(r.form);
+  var op=function(a){return a.map(function(x){return '<option value="'+esc(x)+'">'}).join('')};
+  return '<datalist id="en">'+op(nm)+'</datalist><datalist id="ec">'+op(cs)+'</datalist><div class="card"><b>'+(n?'新增證照':'編輯證照')+'</b><p class="mut">回訓後如果「換發新證」，直接改下面的生效日與有效期滿日；如果只是補時數、證沒有換，請到「回訓紀錄」新增，系統會自動延期。</p>'+
+  f('emp','員編',r.emp)+f('name','姓名',r.name,'text','list="en"')+f('dept','部門',r.dept)+f('cert','證照名稱',r.cert,'text','list="ec"')+f('iss','生效日',r.iss,'date')+f('exp','有效期滿日',r.exp,'date')+f('no','證號',r.no)+
+  '<div class="row" style="margin:6px 0"><span style="width:110px">資料形式</span><select id="e_form">'+fo.map(function(x){return '<option '+(x===(r.form||'')?'selected':'')+'>'+esc(x)+'</option>'}).join('')+'</select></div>'+
+  f('loc','紙本存放位置',r.loc,'text','placeholder="例如 A櫜第2格"')+f('cx','註銷日期',r.cx,'date')+
+  '<div class="row" style="margin-top:10px"><button class="btn p" onclick="saveE()">儲存</button><button class="btn" onclick="go(\'search\')">取消</button>'+(n?'':'<button class="btn" onclick="delE()">刪除這筆</button>')+'</div></div>'}
+function today(){var n=new Date();return iso(n.getFullYear(),n.getMonth()+1,n.getDate())}
+function noFile(r){var f=r.form||'';return !f||/無|沒/.test(f)}
+function missing(r){var m=[];if(r.cx||isLeft(r))return m;if(!r.exp)m.push('缺到期日');if(!r.no)m.push('缺證號');if(noFile(r))m.push('缺文件');
+  var ru=D.rules[std(r)];if(isOn(ru)&&(ru.hours||ru.years)){var ts=D.train.filter(function(t){return t.name===r.name&&t.cert===std(r)}).sort(function(a,b){return b.date.localeCompare(a.date)});
+  if(ts.length){if(ru.hours&&ts[0].hours<ru.hours)m.push('回訓時數不足');if(ts[0].proof==='無')m.push('缺結訓證明')}else if(ru.years&&days(r)!==null&&days(r)<0)m.push('應回訓未回訓')}
+  return m}
+function badge(r){if(isLeft(r))return '<span class="tag">離職</span>';if(r.cx)return '<span class="tag">已註銷</span>';var d=days(r);if(d===null)return '<span class="tag t-warn">無到期日</span>';
+  if(d<0)return '<span class="tag t-bad">已過期 '+(-d)+' 天</span>';
+  if(d<=D.days)return '<span class="tag t-warn">'+d+' 天後到期</span>';
+  return '<span class="tag t-ok">有效</span>'}
+function nav(){var t=[['search','查詢'],['people','人員名單'],['alert','提醒與缺漏'],['edit','新增證照'],['train','回訓紀錄'],['alias','名稱歸併'],['imp','匯入／匯出']];
+  document.getElementById('nav').innerHTML=t.map(function(x){return '<button class="'+(tab===x[0]?'on':'')+'" onclick="go(\''+x[0]+'\')">'+x[1]+'</button>'}).join('')}
+function go(t){tab=t;if(t==='edit')ei=-1;render()}
+function render(){nav();var f={search:vSearch,people:vPeople,alert:vAlert,train:vTrain,edit:vEdit,alias:vAlias,imp:vImp}[tab];document.getElementById('v').innerHTML=banner()+f()}
+
+function vSearch(){
+  if(!D.rows.length)return '<div class="card">還沒有資料，請先到「匯入／匯出」匯入 Excel。</div>';
+  var certs={};D.rows.forEach(function(r){if(!isLeft(r))certs[std(r)]=(certs[std(r)]||0)+1});
+  var names=Object.keys(certs).sort();
+  var kw=q.trim().toLowerCase();
+  var hit=D.rows.filter(function(r){if(isLeft(r))return false;return sel?std(r)===sel:(kw&&(std(r)+r.cert+r.name+(r.emp||'')+(r.dept||'')).toLowerCase().indexOf(kw)>=0)});
+  var h='<input class="big" id="q" placeholder="輸入證照名稱或人名，例如：堆高機" value="'+esc(q)+'" oninput="q=this.value;sel=null;keep()">';
+  h+='<div style="margin:10px 0">'+names.filter(function(n){return !kw||n.toLowerCase().indexOf(kw)>=0}).slice(0,40).map(function(n){return '<button class="chip" onclick="pick(\''+esc(n).replace(/\'/g,"\\'")+'\')">'+esc(n)+' ('+certs[n]+')</button>'}).join('')+'</div>';
+  if(sel||kw){lastHit=hit;
+    h+='<div class="card"><div class="mut">'+(sel?'證照：<b>'+esc(sel)+'</b>，':'')+'共 '+hit.length+' 筆　<button class="btn" onclick="exp(lastHit,\'查詢結果.xlsx\')">匯出這份名單</button></div><div class="scroll"><table><tr><th>員編</th><th>姓名</th><th>部門</th><th>證照</th><th>到期日</th><th>狀態</th><th>證號</th><th>文件</th><th>紙本位置</th><th></th></tr>'+
+    hit.sort(function(a,b){return (due(a)||'9').localeCompare(due(b)||'9')}).map(function(r){return '<tr><td>'+esc(r.emp||'')+'</td><td>'+esc(r.name)+'</td><td>'+esc(r.dept||'')+'</td><td>'+esc(std(r))+'</td><td>'+esc(due(r)||'-')+'</td><td>'+badge(r)+'</td><td>'+esc(r.no||'-')+'</td><td>'+esc(r.form||'-')+'</td><td><input style="width:130px" placeholder="紙本在哪" value="'+esc(r.loc||'')+'" onchange="ed('+D.rows.indexOf(r)+',\'loc\',this.value)"></td><td><button class="btn" onclick="editRow('+D.rows.indexOf(r)+')">編輯</button></td></tr>'}).join('')+'</table></div></div>';
+  }
+  return h;
+}
+function keep(){var p=document.getElementById('q').selectionStart;render();var e=document.getElementById('q');e.focus();e.setSelectionRange(p,p)}
+function pick(n){sel=n;q=n;render()}
+
+function vAlert(){
+  var ex=[],soon=[],miss=[],sz=0;
+  D.rows.forEach(function(r){var d=days(r);if(d!==null&&d<0)ex.push(r);else if(d!==null&&d<=D.days)soon.push(r);if(missing(r).length){if(r.sn&&r.sn>today())sz++;else miss.push(r)}});
+  function tb(a,fn){return a.length?'<div class="scroll"><table>'+a.map(fn).join('')+'</table></div>':'<div class="mut">沒有</div>'}
+  var h='<div class="row"><span>提前提醒天數</span><select onchange="D.days=+this.value;save();render()">'+[30,45,60,90].map(function(n){return '<option '+(n===D.days?'selected':'')+'>'+n+'</option>'}).join('')+'</select></div>';
+  h+='<div class="stat" style="margin:10px 0"><div class="t-bad">已過期<b>'+ex.length+'</b></div><div class="t-warn">快到期<b>'+soon.length+'</b></div><div class="t-warn">資料不齊<b>'+miss.length+'</b></div></div>';
+  var row=function(r){return '<tr><td>'+esc(r.name)+(r.emp?' <span class="mut">'+esc(r.emp)+'</span>':'')+'</td><td>'+esc(std(r))+'</td><td>'+esc(due(r)||'-')+'</td><td>'+badge(r)+'</td><td><button class="btn" onclick="toTrain('+D.rows.indexOf(r)+')">補回訓</button> <button class="btn" onclick="editRow('+D.rows.indexOf(r)+')">改日期</button></td></tr>'};
+  h+='<div class="card"><b>準備囉（'+D.days+' 天內到期）</b>'+tb(soon.sort(function(a,b){return due(a).localeCompare(due(b))}),row)+'</div>';
+  h+='<div class="card"><b>已過期</b>'+tb(ex,row)+'</div>';
+  h+='<div class="card"><b>資料不齊／待補件</b><span class="mut"> 直接在欄位補資料，補齊就會消失；也可按「一週後再提醒」暫時隱藏'+(sz?'（目前延後中 '+sz+' 筆）':'')+'</span>'+tb(miss,missRow)+'</div>';
+  return h;
+}
+
+function vAlias(){
+  var c={};D.rows.forEach(function(r){c[r.cert]=(c[r.cert]||0)+1});
+  var raw=Object.keys(c).sort(),stds=Array.from(new Set(raw.map(function(n){return D.alias[n]||n})));
+  if(!raw.length)return '<div class="card">尚無資料。</div>';
+  return '<div class="card mut">同一張證照有不同寫法時，在右邊填同一個「標準名稱」，按 Enter 或點別處即可儲存，之後匯入會自動套用。</div>'+
+  '<datalist id="sl">'+stds.map(function(s){return '<option value="'+esc(s)+'">'}).join('')+'</datalist>'+
+  '<div class="card scroll"><table><tr><th>原始名稱</th><th>筆數</th><th>標準名稱</th></tr>'+raw.map(function(n,i){return '<tr><td>'+esc(n)+'</td><td>'+c[n]+'</td><td><input list="sl" data-r="'+i+'" value="'+esc(D.alias[n]||n)+'" onchange="setAlias(this)"></td></tr>'}).join('')+'</table></div>';
+}
+function setAlias(el){
+  var c={};D.rows.forEach(function(r){c[r.cert]=1});var n=Object.keys(c).sort()[+el.dataset.r],v=el.value.trim();
+  if(!v||v===n)delete D.alias[n];else D.alias[n]=v;save();render();
+}
+
+function missRow(r){var i=D.rows.indexOf(r),c='';
+  if(!r.exp)c+='<input type="date" onchange="ed('+i+',\'exp\',this.value)"> ';
+  if(!r.no)c+='<input placeholder="證號" style="width:110px" onchange="ed('+i+',\'no\',this.value)"> ';
+  if(noFile(r))c+='<select onchange="ed('+i+',\'form\',this.value)"><option value="">文件形式…</option><option>紙本</option><option>電子檔</option><option>紙本＋電子檔</option></select> ';
+  var o=missing(r).filter(function(m){return /回訓|結訓/.test(m)}).map(function(m){return '<span class="tag t-warn">'+m+'</span> '}).join('');
+  return '<tr><td>'+esc(r.name)+(r.emp?' <span class="mut">'+esc(r.emp)+'</span>':'')+'</td><td>'+esc(std(r))+'</td><td>'+c+o+'</td><td><button class="btn" onclick="snz('+i+')">一週後再提醒</button></td></tr>'}
+function ed(i,k,v){D.rows[i][k]=v.trim();save();render()}
+function snz(i){var x=new Date();x.setDate(x.getDate()+7);D.rows[i].sn=iso(x.getFullYear(),x.getMonth()+1,x.getDate());save();render()}
+function banner(){if(tab==='alert'||!D.rows.length)return '';var e=0,s=0,m=0;D.rows.forEach(function(r){var d=days(r);if(d!==null&&d<0)e++;else if(d!==null&&d<=D.days)s++;if(missing(r).length&&!(r.sn&&r.sn>today()))m++});
+  if(!e&&!s&&!m)return '';return '<div class="card" style="cursor:pointer" onclick="go(\'alert\')">已過期 <b>'+e+'</b>　快到期 <b>'+s+'</b>　資料不齊 <b>'+m+'</b>　<span class="mut">點此查看</span></div>'}
+function certList(){return Array.from(new Set(D.rows.map(std))).sort()}
+function setRule(el,k){var c=certList()[+el.dataset.c],u=D.rules[c]||{};u[k]=+el.value||0;D.rules[c]=u;save();render()}
+function addT(){var g=function(k){return document.getElementById('t_'+k).value.trim()},n=g('name'),c=g('cert'),d=g('date');if(!n||!c||!d){alert('姓名、證照、日期必填');return}D.train.push({name:n,cert:c,date:d,hours:+g('hrs')||0,proof:g('proof')});var fr=pre.name;pre={};save();if(fr)tab='alert';render()}
+function delT(i){D.train.splice(i,1);save();render()}
+function vTrain(){
+  if(!D.rows.length)return '<div class="card">請先匯入證照資料。</div>';
+  var names=Array.from(new Set(D.rows.map(function(r){return r.name}))).sort(),certs=certList();
+  var h='<div class="card"><b>1. 設定哪些證照需要回訓</b><p class="mut">填回訓週期（年）與規定時數，沒勾「需回訓」的證照不會算回訓。證照到期後只要有完成回訓的時數紀錄，系統就用「最近一次回訓日＋週期」算下次到期，不需要新的證照卡。</p><div class="row" style="margin:8px 0"><input id="rqin" placeholder="搜尋證照名稱" value="'+esc(rq)+'" oninput="rqin(this)"><label class="mut"><input type="checkbox" '+(rfilt?'checked':'')+' onchange="rfilt=this.checked;render()"> 只顯示需回訓的（'+certs.filter(function(c){return isOn(D.rules[c])}).length+'）</label></div><div class="scroll"><table><tr><th>需回訓</th><th>證照</th><th>週期（年）</th><th>規定時數</th></tr>'+certs.map(function(c,i){var u=D.rules[c]||{},on=isOn(u);if(rfilt&&!on)return '';if(rq&&c.toLowerCase().indexOf(rq.toLowerCase())<0)return '';return '<tr><td><input type="checkbox" '+(on?'checked':'')+' data-c="'+i+'" onchange="setOn(this)"></td><td>'+esc(c)+'</td><td><input type="number" min="0" style="width:80px" '+(on?'':'disabled ')+'data-c="'+i+'" value="'+(u.years||'')+'" onchange="setRule(this,\'years\')"></td><td><input type="number" min="0" style="width:80px" '+(on?'':'disabled ')+'data-c="'+i+'" value="'+(u.hours||'')+'" onchange="setRule(this,\'hours\')"></td></tr>'}).join('')+'</table></div></div>';
+  h+='<datalist id="tn">'+names.map(function(n){return '<option value="'+esc(n)+'">'}).join('')+'</datalist><datalist id="tc">'+certs.map(function(n){return '<option value="'+esc(n)+'">'}).join('')+'</datalist>';
+  h+=(pre.cert&&!(isOn(D.rules[pre.cert])&&(D.rules[pre.cert]||{}).years)?'<div class="card t-warn">「'+esc(pre.cert)+'」還沒設回訓週期，請先在上方填「週期（年）」，新增回訓紀錄後才會自動延期。</div>':'')+'<div class="card"><b>2. 新增回訓紀錄</b><div class="row" style="margin-top:8px"><input id="t_name" list="tn" placeholder="姓名" value="'+esc(pre.name||'')+'"><input id="t_cert" list="tc" placeholder="證照（標準名稱）" value="'+esc(pre.cert||'')+'"><input id="t_date" type="date"><input id="t_hrs" type="number" min="0" step="0.5" placeholder="時數" style="width:80px"><select id="t_proof"><option value="有">有結訓證明</option><option value="無">無結訓證明</option></select><button class="btn p" onclick="addT()">新增</button></div></div>';
+  var L=D.train.map(function(t,i){return{t:t,i:i}}).sort(function(a,b){return b.t.date.localeCompare(a.t.date)});
+  h+='<div class="card"><b>3. 回訓紀錄（'+L.length+' 筆）</b><div class="scroll"><table><tr><th>日期</th><th>姓名</th><th>證照</th><th>時數</th><th>結訓證明</th><th></th></tr>'+L.map(function(x){var t=x.t;return '<tr><td>'+esc(t.date)+'</td><td>'+esc(t.name)+'</td><td>'+esc(t.cert)+'</td><td>'+t.hours+'</td><td>'+esc(t.proof)+'</td><td><button class="btn" onclick="delT('+x.i+')">刪除</button></td></tr>'}).join('')+'</table></div></div>';
+  return h}
+var FIELDS=[['emp','員編',/員編|員工編號|工號/],['name','姓名',/姓名|名字|^name$/i],['dept','部門',/部門/],['cert','證照名稱',/證照名稱|證書名稱/],['no','證號',/證照號碼|證號|字號/],['issue','生效日',/生效日/],['exp','到期日',/有效期滿|到期|expire/i],['cancel','註銷日期',/註銷/],['retr','是否回訓',/是否回訓/],['vp','有效期（例如 3年）',/^有效期$/],['form','資料形式（紙本／電子）',/^(?!.*(存放|位置|保管)).*(文件登入|紙本|電子|形式|附件)/],['loc','紙本存放位置',/存放|位置|保管/]];
+function vImp(){
+  var h=(pmsg?'<div class="card t-ok">'+esc(pmsg)+'</div>':'')+'<div class="card"><b>匯入 Excel／CSV</b><p class="mut">選擇檔案後，確認各欄位對應再匯入。建議先把姓名、身分證字號遮掉再測試。</p><input type="file" accept=".xlsx,.xls,.csv" onchange="readF(this.files[0])"></div>';
+  if(pv)return pvHtml();if(pend){
+    h+='<div class="card"><b>欄位對應</b>（共 '+pend.rows.length+' 列）<div style="margin-top:8px">'+FIELDS.map(function(f){
+      return '<div class="row" style="margin:6px 0"><span style="width:170px">'+f[1]+'</span><select id="m_'+f[0]+'"><option value="-1">（沒有）</option>'+pend.head.map(function(x,i){return '<option value="'+i+'" '+(pend.guess[f[0]]===i?'selected':'')+'>'+esc(x)+'</option>'}).join('')+'</select></div>'}).join('')+
+      '</div><label class="mut"><input type="checkbox" id="rep"> 取代全部現有資料（會清掉手填的紙本位置、手動新增的證照；一般請不要勾）</label><div style="margin-top:8px"><button class="btn p" onclick="doImp()">預覽匯入結果</button></div></div>';
+  }
+  h+=vExport()+'<div class="card"><b>備份與匯出</b><p class="mut">資料只存在這台電腦的瀏覽器裡，請定期匯出備份。</p><button class="btn" onclick="exp()">匯出整理後 Excel</button> <button class="btn" onclick="bkf()">下載完整備份</button> <button class="btn" onclick="bk()">完整備份（文字）</button> <button class="btn" onclick="rs()">還原備份</button> <button class="btn" onclick="clr()">清除全部資料</button><div id="bkbox" style="margin-top:10px"></div></div>';
+  return h;
+}
+function readF(f){
+  if(!f)return;var rd=new FileReader();
+  rd.onload=function(e){try{
+    var wb=XLSX.read(e.target.result,{type:'array'}),a=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,defval:''});
+    var hi=0;for(var i=0;i<Math.min(a.length,10);i++){if(a[i].filter(String).length>a[hi].filter(String).length)hi=i}
+    var head=a[hi].map(String),g={};
+    FIELDS.forEach(function(f){var k=head.findIndex(function(x){return f[2].test(x)});g[f[0]]=k});
+    pend={head:head,rows:a.slice(hi+1).filter(function(r){return r.some(function(x){return x!==''})}),guess:g};render();
+  }catch(err){alert('讀取失敗：'+err.message)}};
+  rd.readAsArrayBuffer(f);
+}
+var pv=null,pmsg='';
+function ckey(r){return [r.emp,r.name,std(r),r.exp,r.no].join('|')}
+function seedRule(r){var c=std(r);if(r.rt&&/^(是|Y|1|需)/i.test(r.rt)&&!D.rules[c]){var y=(String(r.vp||'').match(/(\d+)\s*年/)||[])[1];if(y)D.rules[c]={years:+y,hours:0}}}
+function preview(inc){
+  var ex={},byp={};D.rows.forEach(function(e,i){ex[ckey(e)]=1;var k=pkey(e)+'|'+std(e);(byp[k]=byp[k]||[]).push(i)});
+  var seen={},p={neu:[],dup:[],sim:[]};
+  inc.forEach(function(n){var k=ckey(n);if(ex[k]||seen[k]){p.dup.push(n);return}seen[k]=1;
+    var c=byp[pkey(n)+'|'+std(n)];
+    if(c){var o=D.rows[c[0]];p.sim.push({n:n,i:c[0],a:(!o.exp||n.exp>o.exp)?'replace':'skip'})}else p.neu.push(n)});
+  pv=p;pmsg='';render()}
+function allAct(v){pv.sim.forEach(function(s){s.a=v});render()}
+function applyPv(){var p=pv,rep=0,both=0,skip=p.dup.length,add=p.neu.slice();
+  p.sim.forEach(function(s){if(s.a==='replace'){var o=D.rows[s.i];for(var k in s.n)if(s.n[k])o[k]=s.n[k];rep++;seedRule(o)}else if(s.a==='both'){add.push(s.n);both++}else skip++});
+  add.forEach(function(r){D.rows.push(r);seedRule(r)});
+  pmsg='已匯入：新增 '+p.neu.length+' 筆、更新 '+rep+' 筆、兩筆並存 '+both+' 筆、略過 '+skip+' 筆。可到「名稱歸併」整理同證照不同名字。';
+  save();pv=null;pend=null;render()}
+function pvHtml(){var p=pv,rowS=function(s,i){var o=D.rows[s.i],n=s.n;
+  return '<tr><td>'+esc(n.name)+'</td><td>'+esc(std(n))+'</td><td>'+esc(o.exp||'-')+' → <b>'+esc(n.exp||'-')+'</b></td><td>'+esc(o.no||'-')+' → <b>'+esc(n.no||'-')+'</b></td><td><select onchange="pv.sim['+i+'].a=this.value">'+[['replace','用新的取代舊的'],['both','兩筆都留'],['skip','略過新的']].map(function(x){return '<option value="'+x[0]+'" '+(s.a===x[0]?'selected':'')+'>'+x[1]+'</option>'}).join('')+'</select></td></tr>'};
+  return '<div class="card"><b>匯入預覽</b><div class="stat" style="margin:10px 0"><div class="t-ok">全新<b>'+p.neu.length+'</b></div><div class="t-warn">疑似同一張<b>'+p.sim.length+'</b></div><div>完全重複<b>'+p.dup.length+'</b></div></div><div class="mut">全新的會直接加入；完全重複的會略過；疑似同一張的請逐筆選擇。「用新的取代」只更新新檔有填的欄位，你手填的紙本位置不會被清掉。</div></div>'
+  +(p.sim.length?'<div class="card"><b>疑似同一張（同人同證照，但日期或證號不同）</b><div class="row" style="margin:8px 0"><button class="btn" onclick="allAct(\'replace\')">全部用新的</button><button class="btn" onclick="allAct(\'both\')">全部兩筆都留</button><button class="btn" onclick="allAct(\'skip\')">全部略過</button></div><div class="scroll"><table><tr><th>姓名</th><th>證照</th><th>到期日（舊→新）</th><th>證號（舊→新）</th><th>處理</th></tr>'+p.sim.map(rowS).join('')+'</table></div></div>':'')
+  +(p.dup.length?'<details class="card"><summary>完全重複，會略過（'+p.dup.length+' 筆）</summary><div class="scroll"><table>'+p.dup.map(function(n){return '<tr><td>'+esc(n.name)+'</td><td>'+esc(std(n))+'</td><td>'+esc(n.exp||'-')+'</td></tr>'}).join('')+'</table></div></details>':'')
+  +'<div class="row"><button class="btn p" onclick="applyPv()">確認匯入</button><button class="btn" onclick="pv=null;render()">取消</button></div>'}
+function doImp(){
+  var m={};FIELDS.forEach(function(f){m[f[0]]=+document.getElementById('m_'+f[0]).value});
+  if(m.name<0||m.cert<0){alert('至少要對應「姓名」與「證照名稱」');return}
+  var out=pend.rows.map(function(r){var g=function(k){return m[k]>=0?r[m[k]]:''};
+    return{emp:String(g('emp')).trim(),name:String(g('name')).trim(),dept:String(g('dept')).trim(),cert:String(g('cert')).trim(),iss:pd(g('issue')),exp:pd(g('exp')),cx:pd(g('cancel')),rt:String(g('retr')).trim(),vp:String(g('vp')).trim(),no:String(g('no')).trim(),form:String(g('form')).trim(),loc:String(g('loc')).trim()}}).filter(function(r){return r.name&&r.cert});
+  if(!document.getElementById('rep').checked){return preview(out)}var seen={},dup=0;
+  out=out.filter(function(r){var k=[r.emp,r.name,std(r),r.exp,r.no].join('|');if(seen[k]){dup++;return false}seen[k]=1;return true});
+  D.rows=out;out.forEach(function(r){var c=std(r);if(r.rt&&/^(是|Y|1|需)/i.test(r.rt)&&!D.rules[c]){var y=(r.vp.match(/(\d+)\s*年/)||[])[1];if(y)D.rules[c]={years:+y,hours:0}}});save();pend=null;alert('已匯入 '+out.length+' 筆，略過重複 '+dup+' 筆。接下來可到「名稱歸併」整理同證照不同名字。');tab='alias';render();
+}
+function exp(rs,fn){
+  var a=(rs||D.rows).map(function(r){return{員編:r.emp,姓名:r.name,部門:r.dept,原始證照名稱:r.cert,標準證照名稱:std(r),生效日:r.iss,到期日:r.exp,含回訓有效期限:due(r),註銷日:r.cx,證號:r.no,資料形式:r.form,紙本位置:r.loc}});
+  var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(a),'證照');XLSX.writeFile(wb,fn||'證照整理.xlsx');
+}
+function bk(){document.getElementById('bkbox').innerHTML='<p class="mut">全選複製下方文字，存成文字檔即可。</p><textarea id="bkt" style="width:100%;height:140px" readonly>'+esc(JSON.stringify(D))+'</textarea>';var t=document.getElementById('bkt');t.focus();t.select()}
+function bkf(){var b=new Blob([JSON.stringify(D)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='證照備份.json';a.click()}
+function rs(){document.getElementById('bkbox').innerHTML='<p class="mut">選備份檔，或把備份文字貼在下面。還原會覆蓋現有的全部資料。</p><input type="file" accept=".json,.txt" onchange="rsf(this.files[0])"><textarea id="bkt" style="width:100%;height:120px;margin-top:8px"></textarea><button class="btn p" onclick="rs2()">確認還原</button>'}
+function rsf(f){if(!f)return;var r=new FileReader();r.onload=function(e){document.getElementById('bkt').value=e.target.result};r.readAsText(f)}
+function rs2(){try{var o=JSON.parse(document.getElementById('bkt').value);if(!Array.isArray(o.rows))throw 0;D=o;D.alias=D.alias||{};D.train=D.train||[];D.rules=D.rules||{};D.left=D.left||{};D.days=D.days||30;save();render()}catch(e){alert('備份內容無法讀取')}}
+function clr(){if(confirm('確定清除所有資料與名稱歸併設定？')){D={rows:[],alias:{},days:30,train:[],rules:{},left:{}};save();render()}}
+load();D.train=D.train||[];D.rules=D.rules||{};D.left=D.left||{};render();
+</script>
+</body>
+</html>
